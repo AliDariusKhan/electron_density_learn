@@ -1,6 +1,6 @@
 # Electron density learn
 These scripts are used to train a convolutional neural network (CNN) that predicts certain properties of a protein residue based on the electron density data around that residue.
-Currently, the CNN estimates how far the C_{$\apha$} atom of the residue is from its correct position.
+Currently, the CNN estimates how far the $C_\alpha$ atom of the residue is from its correct position.
 
 Default values of the arguments discussed below can be found in `src/config.py`.
 
