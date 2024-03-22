@@ -1,0 +1,73 @@
+# .gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+*.pyz
+*.pyzw
+
+# Jupyter Notebook
+*.ipynb
+.ipynb_checkpoints/
+
+# Data
+*.h5
+*.mtz
+*.cif
+*.json
+*.csv
+*.hdf5
+*.pdb
+
+# Mac
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
+
+# Node
+node_modules/
+package-lock.json
+
+# Logs
+logs/
+*.log
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Directories used by tools like virtualenv
+bin/
+include/
+lib/
+lib64/
+share/
+pyvenv.cfg
+.venv/
+ENV/
+
+# pip
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Cython debug symbols
+cython_debug/

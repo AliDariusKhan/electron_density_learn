@@ -1,0 +1,157 @@
+import argparse
+import bisect
+import os
+import random
+import numpy as np
+import tensorflow as tf
+import math
+import config
+import h5py
+
+
+def create_model(input_shape):
+    x = inputs = tf.keras.Input(shape=input_shape)
+    _downsampling_args = {
+        "padding": "same",
+        "use_bias": False,
+        "kernel_size": 3,
+        "strides": 1,
+    }
+
+    filter_list = [32, 64, 128, 256]
+
+    for i, filters in enumerate(filter_list):
+        x = tf.keras.layers.Conv3D(filters, **_downsampling_args)(x)
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.ReLU()(x)
+        if x.shape[1] > 2 and i < len(filter_list) - 1:
+            x = tf.keras.layers.MaxPool3D(2)(x)
+
+    x = tf.keras.layers.Flatten()(x)
+    for filter in reversed(filter_list):
+        x = tf.keras.layers.Dense(filter, activation='relu')(x)
+    output = tf.keras.layers.Dense(1)(x)
+    return tf.keras.Model(inputs=inputs, outputs=output)
+
+def train(training_data, testing_data, input_shape):
+    input = tf.TensorSpec(shape=input_shape, dtype=tf.float32)
+    output = tf.TensorSpec(shape=(1), dtype=tf.float32)
+
+    train_dataset = tf.data.Dataset.from_generator(
+        lambda: training_data, output_signature=(input, output))
+    test_dataset = tf.data.Dataset.from_generator(
+        lambda: testing_data, output_signature=(input, output))
+
+    cnn_path = os.path.join(config.CNN_DIR, "cnn.best.hdf5")
+    if os.path.exists(cnn_path):
+        print("Model already trained")
+        return
+
+    epochs: int = 100
+    batch_size: int = 8
+    steps_per_epoch: int = 10000
+    validation_steps: int = 1000
+
+    train_dataset = train_dataset.repeat(epochs).batch(batch_size=batch_size)
+    test_dataset = test_dataset.repeat(epochs).batch(batch_size=batch_size)
+
+    model = create_model(input_shape)
+    model.summary()
+
+    def custom_loss(y_true, y_pred):
+        difference = y_pred - y_true
+        squared_difference = tf.square(difference)
+        return tf.reduce_sum(squared_difference, axis=-1)**0.5
+
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-5), 
+        loss=custom_loss,  
+        metrics=['mse', custom_loss])
+
+    log_path = os.path.join(config.CNN_DIR, "logs.csv")
+    logger = tf.keras.callbacks.CSVLogger(log_path, append=True)
+    reduce_lr_on_plat = tf.keras.callbacks.ReduceLROnPlateau(
+        monitor="val_loss",
+        factor=0.8,
+        patience=5,
+        verbose=1,
+        mode="auto",
+        cooldown=5,
+        min_lr=1e-7,
+    )
+    weight_path: str = cnn_path
+
+    checkpoint = tf.keras.callbacks.ModelCheckpoint(
+        weight_path,
+        monitor="val_loss",
+        verbose=1,
+        save_best_only=True,
+        mode="min",
+        save_weights_only=False,
+    )
+
+    callbacks_list = [
+        checkpoint,
+        reduce_lr_on_plat,
+        logger,
+    ]
+
+    model.fit(
+        train_dataset,
+        epochs=epochs,
+        steps_per_epoch=steps_per_epoch,
+        validation_data=test_dataset,
+        validation_steps=validation_steps,
+        callbacks=callbacks_list,
+        verbose=1,
+        use_multiprocessing=True,
+    )
+
+def get_model_sizes_and_names(training_data_path):
+    cumulative_residues = []
+    with h5py.File(training_data_path, 'r') as file:
+        model_names = list(file.keys())
+        for model_name in model_names:
+            residue_count = len(file[model_name][config.REFINEMENT_VEC_NAME])
+            cumulative_residues.append(
+                (cumulative_residues or [0])[-1] + residue_count)        
+    return list(zip(cumulative_residues, model_names))
+
+def get_train_test_split(num_residues, train_test_ratio=0.8):
+    num_train_residues = int(num_residues * train_test_ratio)
+    train_residues = random.sample(range(num_residues), num_train_residues)
+    test_residues = list(set(range(num_residues)) - set(train_residues))
+    return train_residues, test_residues
+
+def get_input_shape(training_data_path):
+    with h5py.File(training_data_path, 'r') as file:
+        return file[list(file.keys())[0]]['map_values'][0].shape
+
+def data_generator(res_ids, training_data_path, model_size_and_names):
+    with h5py.File(training_data_path, 'r') as file:
+        for res_id in res_ids:
+            model_id = bisect.bisect_left(model_size_and_names, (res_id,))
+            model_res_id = res_id - model_size_and_names[model_id][0]
+            model_name = model_size_and_names[model_id][1]
+            density_map, refinement_vec = [
+                file[model_name][getattr(config, data)][model_res_id] 
+                for data in ['DENSITY_DATA_NAME', 'REFINEMENT_VEC_NAME']]
+            refinement_vec_mag = np.linalg.norm(refinement_vec).reshape(1)
+            yield density_map, refinement_vec_mag
+
+def main():
+    parser = argparse.ArgumentParser(description='Train convolutional neural network using training data generated by the generate_training_data.py script.')
+    parser.add_argument('--training_data_path', default=config.TRAINING_DATA_PATH, help='Path to the training data.')
+    args = parser.parse_args()
+
+    training_data_path = args.training_data_path
+    input_shape = get_input_shape(training_data_path)
+    model_size_and_names = get_model_sizes_and_names(training_data_path)
+    train_ids, test_ids = get_train_test_split(model_size_and_names[-1][0])
+    training_data, testing_data = (
+        data_generator(res_ids, training_data_path, model_size_and_names) 
+        for res_ids in [train_ids, test_ids])
+    train(training_data, testing_data, input_shape)
+
+if __name__ == "__main__":
+    main()
