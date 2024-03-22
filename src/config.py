@@ -14,6 +14,7 @@ PDB_DOWNLOAD_URL = "https://files.rcsb.org/download"
 JARVIS_PDB_PATH = "/vault/pdb"
 MODELCRAFT_ARGS = {
     "--cycles": "1",
+    "--phases": "PHWT,FOM"
 }
 MODELCRAFT_FLAGS = [
     "--overwrite-directory",

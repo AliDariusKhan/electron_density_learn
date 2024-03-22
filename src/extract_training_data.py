@@ -73,7 +73,7 @@ def standard_position(position, unit_cell):
 def process_model(model_dir, density_map_names, grid_size, spacing, cutoff, normalize_density):
     model_name = os.path.basename(model_dir)
     pdb_id = model_name[:4]
-    ref_structure = gemmi.read_structure(reference_structure_path(pdb_id, model_dir))
+    ref_structure = gemmi.read_structure(reference_structure_path(pdb_id))
     ref_neighbor_search = gemmi.NeighborSearch(ref_structure[0], ref_structure.cell, max_radius=cutoff)
     for chain_idx, chain in enumerate(ref_structure[0]):
         for res_idx, res in enumerate(chain):
@@ -163,6 +163,7 @@ if __name__ == "__main__":
     density_map_names = args.density_map_names.split()
     normalize_density = not args.disable_mtz_normalise
 
+    os.makedirs(config.PDB_DIR, exist_ok=True)
 
     for root, _, files in os.walk(config.MODELS_DIR):
         if not all (data in files for data in ["modelcraft.cif", "modelcraft.mtz"]):

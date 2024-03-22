@@ -20,6 +20,23 @@ def fetch_mtz(pdb_id):
             file.write(chunk)
     return mtz_path
 
+def add_free_r_column(mtz_path):
+    new_mtz_path = mtz_path.replace('.mtz', '_free.mtz')
+    cmd = [
+        'freerflag',
+        'HKLIN', mtz_path,
+        'HKLOUT', new_mtz_path,
+    ]
+    process = subprocess.Popen(
+        cmd, 
+        stdin=subprocess.PIPE, 
+        stdout=subprocess.PIPE, 
+        stderr=subprocess.PIPE, 
+        text=True)
+    process.communicate("END\n")
+    return new_mtz_path
+
+
 def filter_mtz(mtz_path, resolution_cutoff):
     mtz_name = os.path.basename(mtz_path)
     resolution_str = str(resolution_cutoff).replace('.', '_')
@@ -28,6 +45,10 @@ def filter_mtz(mtz_path, resolution_cutoff):
     if os.path.exists(filtered_mtz_path):
         return filtered_mtz_path
     mtz = gemmi.read_mtz_file(mtz_path)
+
+    if 'FREE' not in mtz.column_labels():
+        mtz = gemmi.read_mtz_file(add_free_r_column(mtz_path))
+
     data = np.array(mtz, copy=False)
     mtz.set_data(data[mtz.make_d_array() >= resolution_cutoff])
     mtz.write_to_file(filtered_mtz_path)
@@ -42,7 +63,7 @@ def generate_contents_json(pdb_id):
     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return contents_json_path
 
-def execute_modelcraft(pdb_id, filtered_mtz_path):
+def execute_modelcraft(pdb_id, filtered_mtz_path, multiprocess):
     contents_json_path = generate_contents_json(pdb_id)
 
     model_name = os.path.basename(filtered_mtz_path).split('.')[0]
@@ -61,7 +82,12 @@ def execute_modelcraft(pdb_id, filtered_mtz_path):
         *[item[idx] for item in config.MODELCRAFT_ARGS.items() for idx in [0, 1]],
         *config.MODELCRAFT_FLAGS,
     ]
-    with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as process:
+
+    with subprocess.Popen(
+        cmd, 
+        stdout=subprocess.PIPE, 
+        stderr=subprocess.PIPE, 
+        text=True) as process:
         while True:
             output = process.stdout.readline()
             if output == '' and process.poll() is not None:
@@ -78,19 +104,22 @@ if __name__ == "__main__":
     parser.add_argument(
         '--pdb_ids_file', 
         type=str, 
-        default=config.DEFAULT_FILTER_CUTOFF, 
-        help=f'Filter mtz data such that we remove reflections with resolution better than this value (in angstroms). Default is {config.DEFAULT_FILTER_CUTOFF} angstroms.')
+        default=config.PDB_IDS_FILE, 
+        help=f'Path to a file containing a comma-separated list of PDB IDs to process. Default is at {config.PDB_IDS_FILE}.')
     parser.add_argument(
         '--resolution_cutoff', 
-        default=config.PDB_IDS_FILE, 
+        default=config.DEFAULT_FILTER_CUTOFF, 
+        type=float,
         help=f'Filter mtz data such that we remove reflections with resolution better than this value (in angstroms). Default is {config.DEFAULT_FILTER_CUTOFF} angstroms.')
     args = parser.parse_args()
     resolution_cutoff = args.resolution_cutoff
+    pdb_ids_file = args.pdb_ids_file
+    
 
     for directory in [config.MTZ_DIR, config.FILTERED_MTZ_DIR, config.CONTENTS_DIR]:
         os.makedirs(directory, exist_ok=True)
 
-    with open(config.PDB_IDS_FILE, 'r') as file:
+    with open(pdb_ids_file, 'r') as file:
         pdb_ids = file.read().lower().split(',')
 
     for pdb_id in pdb_ids:
