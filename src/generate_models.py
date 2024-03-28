@@ -6,6 +6,7 @@ import argparse
 import subprocess
 import sys
 import config
+import concurrent.futures
 
 
 def fetch_mtz(pdb_id):
@@ -63,7 +64,7 @@ def generate_contents_json(pdb_id):
     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return contents_json_path
 
-def execute_modelcraft(pdb_id, filtered_mtz_path, multiprocess):
+def execute_modelcraft(pdb_id, filtered_mtz_path):
     contents_json_path = generate_contents_json(pdb_id)
 
     model_name = os.path.basename(filtered_mtz_path).split('.')[0]
@@ -83,21 +84,11 @@ def execute_modelcraft(pdb_id, filtered_mtz_path, multiprocess):
         *config.MODELCRAFT_FLAGS,
     ]
 
-    with subprocess.Popen(
+    subprocess.run(
         cmd, 
         stdout=subprocess.PIPE, 
         stderr=subprocess.PIPE, 
-        text=True) as process:
-        while True:
-            output = process.stdout.readline()
-            if output == '' and process.poll() is not None:
-                break
-            if output:
-                print(output.strip())
-        if process.returncode != 0:
-            for line in process.stderr:
-                print(line.strip())
-            print(f"Failed to execute modelcraft for {pdb_id}': {process.stderr.read().strip()}")
+        text=True)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Download mtz files, filter them and generate models')
@@ -122,7 +113,14 @@ if __name__ == "__main__":
     with open(pdb_ids_file, 'r') as file:
         pdb_ids = file.read().lower().split(',')
 
-    for pdb_id in pdb_ids:
-        mtz = fetch_mtz(pdb_id)
-        filtered_mtz = filter_mtz(mtz, resolution_cutoff)
-        execute_modelcraft(pdb_id, filtered_mtz)
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future_to_pdb_id = {
+            executor.submit(fetch_mtz, pdb_id): pdb_id for pdb_id in pdb_ids}
+        for future in concurrent.futures.as_completed(future_to_pdb_id):
+            pdb_id = future_to_pdb_id[future]
+            try:
+                mtz = future.result()
+                filtered_mtz = filter_mtz(mtz, resolution_cutoff)
+                executor.submit(execute_modelcraft, pdb_id, filtered_mtz)
+            except Exception as exc:
+                print(f'{pdb_id} generated an exception: {exc}')
