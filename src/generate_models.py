@@ -4,7 +4,6 @@ import gemmi
 import numpy as np
 import argparse
 import subprocess
-import sys
 import config
 import concurrent.futures
 
