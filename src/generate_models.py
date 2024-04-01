@@ -8,17 +8,22 @@ import sys
 import config
 import concurrent.futures
 
-
 def fetch_mtz(pdb_id):
     mtz_path = os.path.join(config.MTZ_DIR, f"{pdb_id}.mtz")
     if os.path.exists(mtz_path):
+        print(f"MTZ for {pdb_id} already downloaded")
         return mtz_path
     mtz_url = f"{config.MTZ_DOWNLOAD_URL}/{pdb_id}.mtz"
-    response = requests.get(mtz_url, stream=True)
-    response.raise_for_status()
+    try:
+        response = requests.get(mtz_url, stream=True)
+        response.raise_for_status()
+    except requests.exceptions.HTTPError:
+        print(f"HTTPError: Unable to download MTZ for {pdb_id}")
+        return None
     with open(mtz_path, 'wb') as file:
         for chunk in response.iter_content(chunk_size=8192):
             file.write(chunk)
+    print(f"Downloaded MTZ for {pdb_id}")
     return mtz_path
 
 def add_free_r_column(mtz_path):
@@ -35,8 +40,8 @@ def add_free_r_column(mtz_path):
         stderr=subprocess.PIPE, 
         text=True)
     process.communicate("END\n")
+    print(f"Added free R column to {os.path.basename(mtz_path)}")
     return new_mtz_path
-
 
 def filter_mtz(mtz_path, resolution_cutoff):
     mtz_name = os.path.basename(mtz_path)
@@ -80,18 +85,21 @@ def execute_modelcraft(pdb_id, filtered_mtz_path):
         "--contents", contents_json_path,
         "--data", filtered_mtz_path,
         "--directory", model_path,
-        *[item[idx] for item in config.MODELCRAFT_ARGS.items() for idx in [0, 1]],
+        *[key_or_value for key_and_value in config.MODELCRAFT_ARGS.items() for key_or_value in key_and_value],
         *config.MODELCRAFT_FLAGS,
     ]
-
-    subprocess.run(
+    print(f"Running modelcraft for {pdb_id}")
+    result = subprocess.run(
         cmd, 
         stdout=subprocess.PIPE, 
         stderr=subprocess.PIPE, 
         text=True)
+    print(f"Finished modelcraft for {pdb_id}")
+    print(result.stdout)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Download mtz files, filter them and generate models')
+    parser = argparse.ArgumentParser(
+        description='Download mtz files, filter them and generate models')
     parser.add_argument(
         '--pdb_ids_file', 
         type=str, 
@@ -105,22 +113,16 @@ if __name__ == "__main__":
     args = parser.parse_args()
     resolution_cutoff = args.resolution_cutoff
     pdb_ids_file = args.pdb_ids_file
-    
 
     for directory in [config.MTZ_DIR, config.FILTERED_MTZ_DIR, config.CONTENTS_DIR]:
         os.makedirs(directory, exist_ok=True)
 
     with open(pdb_ids_file, 'r') as file:
-        pdb_ids = file.read().lower().split(',')
+        pdb_ids = [pdb_id.strip() for pdb_id in file.read().lower().split(',')]    
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        future_to_pdb_id = {
-            executor.submit(fetch_mtz, pdb_id): pdb_id for pdb_id in pdb_ids}
-        for future in concurrent.futures.as_completed(future_to_pdb_id):
-            pdb_id = future_to_pdb_id[future]
-            try:
-                mtz = future.result()
-                filtered_mtz = filter_mtz(mtz, resolution_cutoff)
-                executor.submit(execute_modelcraft, pdb_id, filtered_mtz)
-            except Exception as exc:
-                print(f'{pdb_id} generated an exception: {exc}')
+        for pdb_id in pdb_ids:
+            if not (mtz := fetch_mtz(pdb_id)):
+                continue
+            filtered_mtz = filter_mtz(mtz, resolution_cutoff)
+            executor.submit(execute_modelcraft, pdb_id, filtered_mtz)
