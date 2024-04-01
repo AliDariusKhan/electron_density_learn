@@ -100,13 +100,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description='Download mtz files, filter them and generate models')
     parser.add_argument(
-        '--pdb_ids_file', 
-        type=str, 
-        default=config.PDB_IDS_FILE, 
+        '--pdb_ids_file',
+        type=str,
+        default=config.PDB_IDS_FILE,
         help=f'Path to a file containing a comma-separated list of PDB IDs to process. Default is at {config.PDB_IDS_FILE}.')
     parser.add_argument(
-        '--resolution_cutoff', 
-        default=config.DEFAULT_FILTER_CUTOFF, 
+        '--resolution_cutoff',
+        default=config.DEFAULT_FILTER_CUTOFF,
         type=float,
         help=f'Filter mtz data such that we remove reflections with resolution better than this value (in angstroms). Default is {config.DEFAULT_FILTER_CUTOFF} angstroms.')
     args = parser.parse_args()
@@ -117,11 +117,15 @@ if __name__ == "__main__":
         os.makedirs(directory, exist_ok=True)
 
     with open(pdb_ids_file, 'r') as file:
-        pdb_ids = [pdb_id.strip() for pdb_id in file.read().lower().split(',')]    
+        pdb_ids = [pdb_id.strip() for pdb_id in file.read().lower().split(',')]
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         for pdb_id in pdb_ids:
             if not (mtz := fetch_mtz(pdb_id)):
                 continue
-            filtered_mtz = filter_mtz(mtz, resolution_cutoff)
+            try:
+                filtered_mtz = filter_mtz(mtz, resolution_cutoff)
+            except RuntimeError as e:
+                print(f"Error when filtering MTZ data for {pdb_id}: {str(e)}")
+                continue
             executor.submit(execute_modelcraft, pdb_id, filtered_mtz)
