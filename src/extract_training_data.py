@@ -74,6 +74,10 @@ def standard_position(position, unit_cell):
 def process_model(model_dir, density_map_names, grid_size, spacing, cutoff, normalize_density):
     model_name = os.path.basename(model_dir)
     pdb_id = model_name[:4]
+    if (ref_structure_path := reference_structure_path(pdb_id)) is None:
+        print(f"Reference structure path not found for PDB ID {pdb_id}. Skipping...")
+        return
+    ref_structure = gemmi.read_structure(ref_structure_path)
     ref_structure = gemmi.read_structure(reference_structure_path(pdb_id))
     ref_neighbor_search = gemmi.NeighborSearch(ref_structure[0], ref_structure.cell, max_radius=cutoff)
     for chain_idx, chain in enumerate(ref_structure[0]):
