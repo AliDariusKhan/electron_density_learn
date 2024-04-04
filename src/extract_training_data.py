@@ -75,8 +75,8 @@ def process_model(model_dir, density_map_names, grid_size, spacing, cutoff, norm
     model_name = os.path.basename(model_dir)
     pdb_id = model_name[:4]
     if (ref_structure_path := reference_structure_path(pdb_id)) is None:
-        print(f"Reference structure path not found for PDB ID {pdb_id}. Skipping...")
-        return
+        print(f"Reference structure not found for PDB ID {pdb_id}. Skipping...")
+        return 0
     ref_structure = gemmi.read_structure(ref_structure_path)
     ref_structure = gemmi.read_structure(reference_structure_path(pdb_id))
     ref_neighbor_search = gemmi.NeighborSearch(ref_structure[0], ref_structure.cell, max_radius=cutoff)
@@ -131,6 +131,9 @@ def process_model(model_dir, density_map_names, grid_size, spacing, cutoff, norm
             model_map_values.append(np.stack(residue_map_values))
             model_refinement_vecs.append(model_to_ref_residue_basis)
             residue_count += 1
+
+    if not model_refinement_vecs:
+        return 0
 
     with h5py.File(os.path.join(config.MODELS_DIR, 'training_data.h5'), 'a') as f:
         dataset = f.create_group(model_name)
