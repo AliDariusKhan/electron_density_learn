@@ -8,7 +8,7 @@ import h5py
 import cProfile
 import pstats
 import io
-
+import subprocess
 
 def reference_structure_path(pdb_id):
     path = os.path.join(config.PDB_DIR, f"{pdb_id}.pdb")
@@ -71,15 +71,41 @@ def standard_position(position, unit_cell):
         position.y % unit_cell.b,
         position.z % unit_cell.c])
 
-def process_model(model_dir, density_map_names, grid_size, spacing, cutoff, normalize_density):
+def align_reference_to_model(ref_structure_path, model_structure_path, pdb_id, model_dir):
+    aligned_file_path = os.path.join(model_dir, f"{pdb_id}_aligned.pdb")
+    csymmatch_process = subprocess.run(
+        f'csymmatch -pdbin-ref {model_structure_path} -pdbin {ref_structure_path} -pdbout {aligned_file_path}', 
+        shell=True)
+    if csymmatch_process.returncode != 0:
+        raise RuntimeError(f"csymmatch failed with error: {csymmatch_process.stderr}")
+    return aligned_file_path
+
+def process_model(
+        model_dir, 
+        density_map_names, 
+        grid_size, 
+        spacing, 
+        cutoff, 
+        normalize_density,
+        align):
     model_name = os.path.basename(model_dir)
     pdb_id = model_name[:4]
     if (ref_structure_path := reference_structure_path(pdb_id)) is None:
         print(f"Reference structure not found for PDB ID {pdb_id}. Skipping...")
         return 0
+    model_structure_path = os.path.join(model_dir, 'modelcraft.cif')
+    if align:
+        ref_structure_path = align_reference_to_model(
+            ref_structure_path, 
+            model_structure_path,
+            pdb_id,
+            model_dir)
     ref_structure = gemmi.read_structure(ref_structure_path)
-    ref_structure = gemmi.read_structure(reference_structure_path(pdb_id))
-    ref_neighbor_search = gemmi.NeighborSearch(ref_structure[0], ref_structure.cell, max_radius=cutoff)
+    
+    ref_neighbor_search = gemmi.NeighborSearch(
+        ref_structure[0], 
+        ref_structure.cell, 
+        max_radius=cutoff)
     for chain_idx, chain in enumerate(ref_structure[0]):
         for res_idx, res in enumerate(chain):
             for atom_idx, atom in enumerate(res):
@@ -95,7 +121,7 @@ def process_model(model_dir, density_map_names, grid_size, spacing, cutoff, norm
 
     model_map_values = []
     model_refinement_vecs = []
-    model_structure = gemmi.read_structure(os.path.join(model_dir, 'modelcraft.cif'))
+    model_structure = gemmi.read_structure(model_structure_path)
     residue_count = 0
     for chain in model_structure[0]:
         for residue in chain:
@@ -122,10 +148,14 @@ def process_model(model_dir, density_map_names, grid_size, spacing, cutoff, norm
                 continue
             model_CA_pos = standard_position(model_CA.pos, model_structure.cell)
             try:
-                ref_CA_pos = standard_position(ref_CA.pos(), ref_structure.cell)
+                ref_CA_pos = standard_position(
+                    ref_CA.pos(), 
+                    ref_structure.cell)
             except TypeError:
-                ref_CA_pos = standard_position(ref_CA.pos, ref_structure.cell)
-            model_to_ref = ref_CA_pos - model_CA_pos 
+                ref_CA_pos = standard_position(
+                    ref_CA.pos, 
+                    ref_structure.cell)
+            model_to_ref = ref_CA_pos - model_CA_pos
             model_to_ref_residue_basis = inverse_rotation_matrix.dot(model_to_ref)
 
             model_map_values.append(np.stack(residue_map_values))
@@ -166,6 +196,11 @@ if __name__ == "__main__":
         '--disable_mtz_normalise', 
         action='store_true', 
         help='Disable MTZ normalisation if this flag is set.')
+    parser.add_argument(
+        '--align_models', 
+        action='store_true', 
+        default=False,
+        help='Disable MTZ normalisation if this flag is set.')
     
     args = parser.parse_args()
     grid_size = args.grid_size
@@ -173,6 +208,7 @@ if __name__ == "__main__":
     cutoff = args.cutoff
     density_map_names = args.density_map_names.split()
     normalize_density = not args.disable_mtz_normalise
+    align = args.align_models
 
     os.makedirs(config.PDB_DIR, exist_ok=True)
 
@@ -190,7 +226,14 @@ if __name__ == "__main__":
     for root, _, files in os.walk(config.MODELS_DIR):
         if not all (data in files for data in ["modelcraft.cif", "modelcraft.mtz"]):
             continue
-        residue_count += process_model(root, density_map_names, grid_size, spacing, cutoff, normalize_density)
+        residue_count += process_model(
+            root, 
+            density_map_names, 
+            grid_size, 
+            spacing, 
+            cutoff, 
+            normalize_density,
+            align)
         print("Residue count:", residue_count)
 
     pr.disable()
